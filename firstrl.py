@@ -30,6 +30,19 @@ game_state = 'playing'
 player_action = None
 
 libtcod.sys_set_fps(LIMIT_FPS)
+
+class Fighter:
+    def __init__(self, hp, defense, power):
+        self.max_hp = hp
+        self.hp = hp
+        self.defense = defense
+        self.power = power
+
+class BasicMonster:
+    def take_turn(self):
+        print ' The ' +self.owner.name + ' growls!'
+
+
 class Rect:
     def __init__(self, x,y,w,h):
         self.x1=x
@@ -47,13 +60,20 @@ class Rect:
                 self.y1 <= other.y2 and self.y2 >= other.y1)
 
 class Object:
-    def __init__(self, x, y, char,name, color,blocks=False):
+    def __init__(self, x, y, char,name, color,blocks=False, fighter=None, ai=None):
         self.x =x 
         self.y =y
         self.char = char
         self.color = color
         self.name = name
         self.blocks = blocks
+        self.fighter = fighter
+        if self.fighter:
+            self.fighter.owner = self
+
+        self.ai = ai
+        if self.ai:
+            self.ai.owner = self
 
     def move(self, dx,dy):
         if not is_blocked(self.x+dx, self.y+dy):
@@ -76,7 +96,8 @@ class Tile:
         if block_sight is None: block_sight = blocked
         self.block_sight = block_sight
 
-player = Object(SCREEN_WIDTH/2, SCREEN_HEIGHT/2, '@','player', libtcod.white)
+fighter_component = Fighter(hp=30, defense=2, power=5)
+player = Object(0,0, '@','player', libtcod.white, blocks=True, fighter=fighter_component)
 objects = [player]
 
 def is_blocked(x,y):
@@ -89,6 +110,26 @@ def is_blocked(x,y):
 
     return False
 
+def player_move_or_attack(dx, dy):
+    global fov_recompute
+
+    x = player.x + dx
+    y= player.y + dy
+
+    target = None
+    for object in objects:
+        if object.x == x and object.y==y:
+            target = object
+            break
+
+    if target is not None:
+        print 'The ' + target.name + ' laughs at your puny efforts to attack him!'
+    else:
+        player.move(dx,dy)
+        fov_recompute = True
+
+
+    
 
 def handle_keys():
     global fov_recompute
@@ -100,24 +141,20 @@ def handle_keys():
         
     if game_state == 'playing':
         if libtcod.console_is_key_pressed(libtcod.KEY_UP):
-            player.move(0,-1)
-            fov_recompute=True
+            player_move_or_attack(0,-1)
         elif libtcod.console_is_key_pressed(libtcod.KEY_DOWN):
-            player.move(0,1)
-            fov_recompute=True
+            player_move_or_attack(0,1)
         elif libtcod.console_is_key_pressed(libtcod.KEY_LEFT):
-            player.move(-1,0)
-            fov_recompute=True
+            player_move_or_attack(-1,0)
         elif libtcod.console_is_key_pressed(libtcod.KEY_RIGHT):
-            player.move(1,0)
-            fov_recompute=True
+            player_move_or_attack(1,0)
     else:
         return 'didnt-take-turn'
 
 def create_room(room):
     global map
-    for x in range(room.x1+1,room.x2+1):
-        for y in range(room.y1+1, room.y2+1):
+    for x in range(room.x1+1,room.x2):
+        for y in range(room.y1+1, room.y2):
             map[x][y].blocked=False
             map[x][y].block_sight = False
 
@@ -224,9 +261,17 @@ def place_objects(room):
 
         if not is_blocked(x,y):
             if libtcod.random_get_int(0,0,100) < 80:
-                monster = Object(x,y,'o', 'orc', libtcod.desaturated_green,blocks=True)
+                fighter_component = Fighter(hp=10,defense=0, power=3)
+                ai_component= BasicMonster() 
+
+                monster = Object(x,y,'o', 'orc', libtcod.desaturated_green,blocks=True,
+                        fighter=fighter_component, ai=ai_component)
             else:
-                monster = Object(x,y,'T', 'troll',libtcod.darker_green, blocks=True)
+                fighter_component = Fighter(hp=16,defense=1, power=4)
+                ai_component = BasicMonster()
+
+                monster = Object(x,y,'T', 'troll',libtcod.darker_green,
+                       blocks=True, fighter=fighter_component, ai=ai_component )
 
             objects.append(monster)
 
@@ -246,6 +291,11 @@ while not libtcod.console_is_window_closed():
     for object in objects:
         object.clear()
     player_action= handle_keys()
+    if game_state == 'playing' and player_action != 'didnt_take_turn':
+        for object in objects:
+            if object != player:
+                print 'The ' + object.name + ' growls!'
+
     if player_action == 'exit':
         break 
 
