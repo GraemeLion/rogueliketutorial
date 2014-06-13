@@ -27,7 +27,8 @@ LIGHTNING_DAMAGE=20
 LIGHTNING_RANGE = 5
 CONFUSE_NUM_TURNS = 10
 CONFUSE_RANGE = 8
-
+FIREBALL_DAMAGE = 12
+FIREBALL_RADIUS = 3
 
 
 
@@ -69,6 +70,13 @@ class Item:
             inventory.append(self.owner)
             objects.remove(self.owner)
             message('You picked up a ' + self.owner.name + '!', libtcod.green)
+
+    def drop(self):
+        objects.append(self.owner)
+        inventory.remove(self.owner)
+        self.owner.x = player.x
+        self.owner.y = player.y
+        message('You dropped a ' + self.owner.name + '.', libtcod.yellow)
 
 class Fighter:
     def __init__(self, hp, defense, power, death_function=None):
@@ -197,6 +205,9 @@ class Object:
 
     def __repr__(self):
         return self.name
+
+    def distance(self,x,y):
+        return math.sqrt((x-self.x) ** 2 + (y-self.y) **2)
 
 class Tile:
     def __init__(self, blocked, block_sight = None):
@@ -354,6 +365,11 @@ def handle_keys():
                 chosen_item = inventory_menu('Press the key next to an item to use it, or any other key to cancel.')
                 if chosen_item is not None:
                     chosen_item.use()
+
+            if key_char == 'd':
+                chosen_item = inventory_menu('Press the key next to an item to drop it, or any other to cancel')
+                if chosen_item is not None:
+                    chosen_item.drop()
 
             return 'didnt_take_turn'
 
@@ -525,12 +541,15 @@ def place_objects(room):
             if dice < 70:
                 item_component=Item(use_function=cast_heal)
                 item = Object(x,y,'!', 'healing potion', libtcod.violet, item=item_component)
-            elif dice < 70+15:
+            elif dice < 70+10:
                 item_component = Item(use_function=cast_lightning)
                 item = Object(x,y,'#', 'scroll of lightning bolt', libtcod.light_yellow, item=item_component)
-            else:
+            elif dice < 70+10+10:
                 item_component = Item(use_function=cast_confuse)
                 item = Object(x,y,'#', 'scroll of confusion', libtcod.light_yellow, item=item_component)
+            else:
+                item_component = Item(use_function=cast_fireball)
+                item = Object(x,y, '#', 'scroll of fireball', libtcod.light_yellow, item=item_component)
 
             
             objects.append(item)
@@ -559,17 +578,45 @@ def closest_monster(max_range):
     return closest_enemy
             
 def cast_confuse():
-    monster = closest_monster(CONFUSE_RANGE)
-    if monster is None:
-        message('No enemy is close enough to confuse.', libtcod.red)
-        return 'cancelled'
+    message('Left click an enemy to confuse it, or right click to cancel')
+    monster=target_monster(CONFUSE_RANGE)
+    if monster is None: return 'cancelled'
 
     old_ai = monster.ai
     monster.ai  = ConfusedMonster(old_ai)
     monster.ai.owner = monster
     message('The eyes of the ' + monster.name + ' look vacant, as he starts to stumble around!', libtcod.light_green)
 
+def target_tile(max_range=None):
+    global key, mouse
+    while True:
+        libtcod.console_flush()
+        libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
 
+        (x,y) = (mouse.cx, mouse.cy)
+        if (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map,x,y) and 
+                (max_range is None or player.distance(x,y) <= max_range)):
+            return (x,y)
+        if mouse.rbutton_pressed or key.vk==libtcod.KEY_ESCAPE:
+            return (None, None) 
+
+def cast_fireball():
+    message('Left-click a target for the fireball, or right click to cancel.', libtcod.light_cyan)
+    for obj in objects:
+        if obj.distance(x,y) <= FIREBALL_RADIUS and obj.fighter:
+            message('The ' + obj.name + ' gets burned for ' + str(FIREBALL_DAMAGE) + ' hit points.', libtcod.orange)
+            obj.fighter.take_damage(FIREBALL_DAMAGE)
+
+
+def target_monster(max_range=None):
+    while True:
+        (x,y) = target_tile(max_range)
+        if x is None:
+            return None
+
+        for obj in objects:
+            if obj.x == x and obj.y == y and obj.fighter and obj!=player:
+                return obj
 
 make_map()
 fov_map=libtcod.map_new(MAP_WIDTH,MAP_HEIGHT)
