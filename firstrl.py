@@ -20,13 +20,18 @@ PANEL_Y = SCREEN_HEIGHT - PANEL_HEIGHT
 MSG_X = BAR_WIDTH + 2
 MSG_WIDTH = SCREEN_WIDTH -BAR_WIDTH - 2 
 MSG_HEIGHT = PANEL_HEIGHT - 1
-
+MAX_ROOM_ITEMS = 2 
+INVENTORY_WIDTH = 50 
+HEAL_AMOUNT = 4
+LIGHTNING_DAMAGE=20
+LIGHTNING_RANGE = 5
 color_dark_wall = libtcod.Color(0,0,100)
 color_light_wall = libtcod.Color(130,110,50)
 color_dark_ground = libtcod.Color(50,50,150)
 color_light_ground = libtcod.Color(200,180,50)
 fov_recompute = True
 game_msgs = []
+inventory = []
 
 libtcod.console_set_custom_font('arial10x10.png', libtcod.FONT_TYPE_GREYSCALE | libtcod.FONT_LAYOUT_TCOD)
 
@@ -39,6 +44,25 @@ game_state = 'playing'
 player_action = None
 
 libtcod.sys_set_fps(LIMIT_FPS)
+
+class Item:
+    def __init__(self, use_function=None):
+        self.use_function = use_function
+
+    def use(self):
+        if self.use_function is None:
+            message ('The ' + self.owner.name + ' cannot be used.')
+        else:
+            if self.use_function() != 'cancelled':
+                inventory.remove(self.owner)
+
+    def pick_up(self):
+        if len(inventory) >= 26:
+            message('Your inventory is full, cannot pick up ' + self.owner.name + '.', libtcod.red)
+        else:
+            inventory.append(self.owner)
+            objects.remove(self.owner)
+            message('You picked up a ' + self.owner.name + '!', libtcod.green)
 
 class Fighter:
     def __init__(self, hp, defense, power, death_function=None):
@@ -65,6 +89,11 @@ class Fighter:
             target.fighter.take_damage(damage)
         else:
             print self.owner.name.capitalize() + ' attacks ' + target.name + ' but it has no effect!'
+
+    def heal(self, amount):
+        self.hp += amount
+        if self.hp > self.max_hp:
+            self.hp = self.max_hp
 
 class BasicMonster:
     def take_turn(self):
@@ -94,7 +123,7 @@ class Rect:
                 self.y1 <= other.y2 and self.y2 >= other.y1)
 
 class Object:
-    def __init__(self, x, y, char,name, color,blocks=False, fighter=None, ai=None):
+    def __init__(self, x, y, char,name, color,blocks=False, fighter=None, ai=None, item=None):
         self.x =x 
         self.y =y
         self.char = char
@@ -108,6 +137,10 @@ class Object:
         self.ai = ai
         if self.ai:
             self.ai.owner = self
+
+        self.item = item
+        if self.item:
+            self.item.owner = self
 
     def move(self, dx,dy):
         if not is_blocked(self.x+dx, self.y+dy):
@@ -153,6 +186,15 @@ class Tile:
         if block_sight is None: block_sight = blocked
         self.block_sight = block_sight
 
+
+def cast_heal():
+    if player.fighter.hp == player.fighter.max_hp:
+        message('You are already at full health.', libtcod.red)
+        return 'cancelled'
+
+    message('Your wounds start to feel better!', libtcod.light_violet)
+    player.fighter.heal(HEAL_AMOUNT)
+
 def message(new_msg,color=libtcod.white):
     new_msg_lines = textwrap.wrap(new_msg,MSG_WIDTH)
     for line in new_msg_lines:
@@ -195,6 +237,43 @@ def is_blocked(x,y):
             return True
 
     return False
+
+def menu(header,options,width):
+    if len(options) > 26: raise ValueError('Cannot have a menu with more than 2 options.')
+    header_height = libtcod.console_get_height_rect(con, 0, 0, width, SCREEN_HEIGHT, header)
+    height = len(options) + header_height
+
+    window = libtcod.console_new(width,height)
+    libtcod.console_set_default_foreground(window, libtcod.white)
+    libtcod.console_print_rect_ex(window, 0,0, width, height, libtcod.BKGND_NONE, libtcod.LEFT, header)
+
+    y = header_height
+    letter_index = ord('a')
+    for option_text in options:
+        text = '(' + chr(letter_index) + ') '+ option_text
+        libtcod.console_print_ex(window,0,y,libtcod.BKGND_NONE,libtcod.LEFT, text)
+        y+=1
+        letter_index +=1
+        
+    x = SCREEN_WIDTH / 2 - width/2
+    y = SCREEN_HEIGHT /2 - height /2 
+    libtcod.console_blit(window, 0, 0, width, height, 0, x,y,1.0,0.7)
+    libtcod.console_flush()
+    key = libtcod.console_wait_for_keypress(True)
+    index = key.c - ord('a')
+    if index >= 0 and index < len(options): return index
+    return None
+
+def inventory_menu(header):
+    global inventory
+    if len(inventory) == 0:
+        options = ['Inventory is empty.']
+    else:
+        options = [item.name for item in inventory]
+
+    index = menu(header,options,INVENTORY_WIDTH)
+    if index is None or len(inventory) == 0: return None
+    return inventory[index].item
 
 def player_move_or_attack(dx, dy):
     global fov_recompute
@@ -245,6 +324,17 @@ def handle_keys():
         elif libtcod.console_is_key_pressed(libtcod.KEY_RIGHT):
             player_move_or_attack(1,0)
         else:
+            key_char = chr(key.c)
+            if key_char == 'g':
+                for object in objects:
+                    if object.x == player.x and object.y ==player.y and object.item:
+                        object.item.pick_up()
+                        break
+            if key_char == 'i':
+                chosen_item = inventory_menu('Press the key next to an item to use it, or any other key to cancel.')
+                if chosen_item is not None:
+                    chosen_item.use()
+
             return 'didnt_take_turn'
 
 def create_room(room):
@@ -386,8 +476,8 @@ def place_objects(room):
     num_monsters = libtcod.random_get_int(0,0,MAX_ROOM_MONSTERS)
 
     for i in range(num_monsters):
-        x = libtcod.random_get_int(0,room.x1,room.x2)
-        y = libtcod.random_get_int(0,room.y1,room.y2)
+        x = libtcod.random_get_int(0,room.x1+1,room.x2-1)
+        y = libtcod.random_get_int(0,room.y1+1,room.y2-1)
 
         if not is_blocked(x,y):
             if libtcod.random_get_int(0,0,100) < 80:
@@ -404,7 +494,46 @@ def place_objects(room):
                        blocks=True, fighter=fighter_component, ai=ai_component )
 
             objects.append(monster)
+    num_items = libtcod.random_get_int(0,0,MAX_ROOM_ITEMS)
 
+    for i in range(num_items):
+        x=libtcod.random_get_int(0,room.x1+1,room.x2-1)
+        y=libtcod.random_get_int(0,room.y1+1,room.y2-1)
+
+        if not is_blocked(x,y):
+            dice = libtcod.random_get_int(0,0,100)
+            if dice < 70:
+                item_component=Item(use_function=cast_heal)
+                item = Object(x,y,'!', 'healing potion', libtcod.violet, item=item_component)
+            else:
+                item_component = Item(use_function=cast_lightning)
+                item = Object(x,y,'#', 'scroll of lightning bolt', libtcod.light_yellow, item=item_component)
+            
+            objects.append(item)
+            item.send_to_back()
+
+def cast_lightning():
+    monster = closest_monster(LIGHTNING_RANGE)
+    if monster is None:
+        message('No enemy is close enough to strike.', libtcod.red)
+        return 'cancelled'
+
+    message('A lightning bolt strikes the ' + monster.name + ' with a loud thunder! The damage is '
+        + str(LIGHTNING_DAMAGE) + ' hit points.', libtcod.light_blue)
+    monster.fighter.take_damage(LIGHTNING_DAMAGE)
+
+def closest_monster(max_range):
+    closest_enemy = None
+    closest_dist = max_range + 1
+
+    for object in objects:
+        if object.fighter and not object == player and libtcod.map_is_in_fov(fov_map, object.x, object.y):
+            dist = player.distance_to(object)
+            if dist < closest_dist:
+                closest_enemy = object
+                closest_dist = dist
+    return closest_enemy
+            
 
 make_map()
 fov_map=libtcod.map_new(MAP_WIDTH,MAP_HEIGHT)
