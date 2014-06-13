@@ -592,16 +592,21 @@ def target_tile(max_range=None):
     while True:
         libtcod.console_flush()
         libtcod.sys_check_for_event(libtcod.EVENT_KEY_PRESS|libtcod.EVENT_MOUSE,key,mouse)
+        render_all()
 
         (x,y) = (mouse.cx, mouse.cy)
-        if (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map,x,y) and 
+        if (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map, x, y) and
                 (max_range is None or player.distance(x,y) <= max_range)):
-            return (x,y)
+           return (x,y)
         if mouse.rbutton_pressed or key.vk==libtcod.KEY_ESCAPE:
             return (None, None) 
 
 def cast_fireball():
     message('Left-click a target for the fireball, or right click to cancel.', libtcod.light_cyan)
+    (x,y) = target_tile()
+    if x is None: return 'cancelled'
+
+    message('The fireball explodes, burning everything within ' +str(FIREBALL_RADIUS) + ' tiles!', libtcod.orange)
     for obj in objects:
         if obj.distance(x,y) <= FIREBALL_RADIUS and obj.fighter:
             message('The ' + obj.name + ' gets burned for ' + str(FIREBALL_DAMAGE) + ' hit points.', libtcod.orange)
